@@ -142,6 +142,48 @@ Check distro name with `wsl -l -v` in PowerShell.
 
 ---
 
+## 🍎 macOS Installation Guide
+
+### Command Not Found After Installation
+
+If `ccb`, `cask`, `cping` commands are not found after running `./install.sh install`:
+
+**Cause:** The install directory (`~/.local/bin`) is not in your PATH.
+
+**Solution:**
+
+```bash
+# 1. Check if install directory exists
+ls -la ~/.local/bin/
+
+# 2. Check if PATH includes the directory
+echo $PATH | tr ':' '\n' | grep local
+
+# 3. Check shell config (macOS defaults to zsh)
+cat ~/.zshrc | grep local
+
+# 4. If not configured, add manually
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+
+# 5. Reload config
+source ~/.zshrc
+```
+
+### WezTerm Not Detecting Commands
+
+If WezTerm cannot find ccb commands but regular Terminal can:
+
+- WezTerm may use a different shell config
+- Add PATH to `~/.zprofile` as well:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
+```
+
+Then restart WezTerm completely (Cmd+Q, reopen).
+
+---
+
 ## 🗣️ Usage
 
 Once started, collaborate naturally. Claude will detect when to delegate tasks.
