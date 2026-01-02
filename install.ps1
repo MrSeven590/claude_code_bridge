@@ -289,6 +289,21 @@ function Install-ClaudeConfig {
     }
   }
 
+  # Install skills
+  $skillsDir = Join-Path $claudeDir "skills"
+  $srcSkills = Join-Path $repoRoot "skills"
+  if (Test-Path $srcSkills) {
+    if (-not (Test-Path $skillsDir)) {
+      New-Item -ItemType Directory -Path $skillsDir -Force | Out-Null
+    }
+    Get-ChildItem -Path $srcSkills -Directory | ForEach-Object {
+      $destPath = Join-Path $skillsDir $_.Name
+      if (Test-Path $destPath) { Remove-Item -Recurse -Force $destPath }
+      Copy-Item -Recurse $_.FullName $destPath
+      Write-Host "  Installed skill: $($_.Name)"
+    }
+  }
+
   $codexRules = @"
 <!-- CCB_CONFIG_START -->
 ## Codex Collaboration Rules
