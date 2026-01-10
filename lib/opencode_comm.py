@@ -1009,8 +1009,6 @@ class OpenCodeCommunicator:
             terminal = os.environ.get("OPENCODE_TERMINAL", "tmux")
             if terminal == "wezterm":
                 pane_id = os.environ.get("OPENCODE_WEZTERM_PANE", "")
-            elif terminal == "iterm2":
-                pane_id = os.environ.get("OPENCODE_ITERM2_PANE", "")
             else:
                 pane_id = ""
             result = {

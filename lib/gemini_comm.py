@@ -569,8 +569,6 @@ class GeminiCommunicator:
             # Get correct pane_id based on terminal type
             if terminal == "wezterm":
                 pane_id = os.environ.get("GEMINI_WEZTERM_PANE", "")
-            elif terminal == "iterm2":
-                pane_id = os.environ.get("GEMINI_ITERM2_PANE", "")
             else:
                 pane_id = ""
             result = {

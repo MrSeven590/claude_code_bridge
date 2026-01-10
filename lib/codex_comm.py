@@ -686,8 +686,6 @@ class CodexCommunicator:
             # Get pane_id based on terminal type
             if terminal == "wezterm":
                 pane_id = os.environ.get("CODEX_WEZTERM_PANE", "")
-            elif terminal == "iterm2":
-                pane_id = os.environ.get("CODEX_ITERM2_PANE", "")
             else:
                 pane_id = ""
             result = {

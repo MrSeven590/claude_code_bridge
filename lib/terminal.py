@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -215,137 +216,292 @@ class TerminalBackend(ABC):
 
 
 class TmuxBackend(TerminalBackend):
-    def send_text(self, session: str, text: str) -> None:
-        sanitized = text.replace("\r", "").strip()
+    """
+    tmux backend (pane-oriented).
+
+    Compatibility note:
+    - New API prefers tmux pane IDs like `%12`.
+    - Legacy CCB code may still pass a tmux *session name* as `pane_id` (pure tmux mode).
+      For backward compatibility, methods accept both:
+        - If target starts with `%` or contains `:`/`.` it is treated as a tmux target (pane/window/session:win.pane).
+        - Otherwise it is treated as a tmux session name (single-pane session legacy behavior).
+    """
+
+    _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+    def __init__(self, *, socket_name: str | None = None):
+        # Optional tmux server socket isolation (like `tmux -L <name>`). Useful for daemon mode.
+        self._socket_name = (socket_name or os.environ.get("CCB_TMUX_SOCKET") or "").strip() or None
+
+    def _tmux_base(self) -> list[str]:
+        cmd = ["tmux"]
+        if self._socket_name:
+            cmd.extend(["-L", self._socket_name])
+        return cmd
+
+    def _tmux_run(self, args: list[str], *, check: bool = False, capture: bool = False, input_bytes: bytes | None = None,
+                  timeout: float | None = None) -> subprocess.CompletedProcess:
+        kwargs: dict = {}
+        if capture:
+            kwargs.update({
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+            })
+        if input_bytes is not None:
+            kwargs["input"] = input_bytes
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        return _run([*self._tmux_base(), *args], check=check, **kwargs)
+
+    @staticmethod
+    def _looks_like_pane_id(value: str) -> bool:
+        v = (value or "").strip()
+        return v.startswith("%")
+
+    @staticmethod
+    def _looks_like_tmux_target(value: str) -> bool:
+        v = (value or "").strip()
+        if not v:
+            return False
+        return v.startswith("%") or (":" in v) or ("." in v)
+
+    def get_current_pane_id(self) -> str:
+        """
+        Return current tmux pane id in `%xx` format.
+
+        - Inside tmux, prefer `$TMUX_PANE`.
+        - Fallback to `tmux display-message` (requires an attached client).
+        """
+        env_pane = (os.environ.get("TMUX_PANE") or "").strip()
+        if self._looks_like_pane_id(env_pane):
+            return env_pane
+
+        cp = self._tmux_run(["display-message", "-p", "#{pane_id}"], capture=True)
+        out = (cp.stdout or "").strip()
+        if self._looks_like_pane_id(out):
+            return out
+        raise RuntimeError("tmux current pane id not available (not in tmux client?)")
+
+    def split_pane(self, parent_pane_id: str, direction: str, percent: int) -> str:
+        """
+        Split `parent_pane_id` and return the created tmux pane id (`%xx`), using `-P -F`.
+        """
+        if not parent_pane_id:
+            raise ValueError("parent_pane_id is required")
+        direction_norm = (direction or "").strip().lower()
+        if direction_norm in ("right", "h", "horizontal"):
+            flag = "-h"
+        elif direction_norm in ("bottom", "v", "vertical"):
+            flag = "-v"
+        else:
+            raise ValueError(f"unsupported direction: {direction!r} (use 'right' or 'bottom')")
+
+        pct = max(1, min(99, int(percent)))
+        cp = self._tmux_run(
+            ["split-window", flag, "-p", str(pct), "-t", parent_pane_id, "-P", "-F", "#{pane_id}"],
+            check=True,
+            capture=True,
+        )
+        pane_id = (cp.stdout or "").strip()
+        if not self._looks_like_pane_id(pane_id):
+            raise RuntimeError(f"tmux split-window did not return pane_id: {pane_id!r}")
+        return pane_id
+
+    def set_pane_title(self, pane_id: str, title: str) -> None:
+        if not pane_id:
+            return
+        self._tmux_run(["select-pane", "-t", pane_id, "-T", title or ""], check=False)
+
+    def find_pane_by_title_marker(self, marker: str) -> Optional[str]:
+        marker = (marker or "").strip()
+        if not marker:
+            return None
+        cp = self._tmux_run(["list-panes", "-a", "-F", "#{pane_id}\t#{pane_title}"], capture=True)
+        if cp.returncode != 0:
+            return None
+        for line in (cp.stdout or "").splitlines():
+            if not line.strip():
+                continue
+            if "\t" in line:
+                pid, title = line.split("\t", 1)
+            else:
+                parts = line.split(" ", 1)
+                pid, title = (parts[0], parts[1] if len(parts) > 1 else "")
+            if (title or "").startswith(marker):
+                pid = pid.strip()
+                if self._looks_like_pane_id(pid):
+                    return pid
+        return None
+
+    def get_pane_content(self, pane_id: str, lines: int = 20) -> Optional[str]:
+        if not pane_id:
+            return None
+        n = max(1, int(lines))
+        cp = self._tmux_run(["capture-pane", "-t", pane_id, "-p", "-S", f"-{n}"], capture=True)
+        if cp.returncode != 0:
+            return None
+        text = cp.stdout or ""
+        return self._ANSI_RE.sub("", text)
+
+    # Keep compatibility with existing daemon code
+    def get_text(self, pane_id: str, lines: int = 20) -> Optional[str]:
+        return self.get_pane_content(pane_id, lines=lines)
+
+    def is_pane_alive(self, pane_id: str) -> bool:
+        if not pane_id:
+            return False
+        cp = self._tmux_run(["list-panes", "-t", pane_id, "-F", "#{pane_dead}"], capture=True)
+        if cp.returncode != 0:
+            return False
+        return (cp.stdout or "").strip() == "0"
+
+    def _ensure_not_in_copy_mode(self, pane_id: str) -> None:
+        try:
+            cp = self._tmux_run(["display-message", "-p", "-t", pane_id, "#{pane_in_mode}"], capture=True, timeout=1.0)
+            if cp.returncode == 0 and (cp.stdout or "").strip() in ("1", "on", "yes"):
+                self._tmux_run(["send-keys", "-t", pane_id, "-X", "cancel"], check=False)
+        except Exception:
+            pass
+
+    def send_text(self, pane_id: str, text: str) -> None:
+        sanitized = (text or "").replace("\r", "").strip()
         if not sanitized:
             return
-        # Fast-path for typical short, single-line commands (fewer tmux subprocess calls).
-        if "\n" not in sanitized and len(sanitized) <= 200:
-            _run(["tmux", "send-keys", "-t", session, "-l", sanitized], check=True)
-            _run(["tmux", "send-keys", "-t", session, "Enter"], check=True)
+
+        # Legacy: treat `pane_id` as a tmux session name for pure-tmux mode.
+        if not self._looks_like_tmux_target(pane_id):
+            session = pane_id
+            if "\n" not in sanitized and len(sanitized) <= 200:
+                self._tmux_run(["send-keys", "-t", session, "-l", sanitized], check=True)
+                self._tmux_run(["send-keys", "-t", session, "Enter"], check=True)
+                return
+            buffer_name = f"ccb-tb-{os.getpid()}-{int(time.time() * 1000)}"
+            self._tmux_run(["load-buffer", "-b", buffer_name, "-"], check=True, input_bytes=sanitized.encode("utf-8"))
+            try:
+                self._tmux_run(["paste-buffer", "-t", session, "-b", buffer_name, "-p"], check=True)
+                enter_delay = _env_float("CCB_TMUX_ENTER_DELAY", 0.0)
+                if enter_delay:
+                    time.sleep(enter_delay)
+                self._tmux_run(["send-keys", "-t", session, "Enter"], check=True)
+            finally:
+                self._tmux_run(["delete-buffer", "-b", buffer_name], check=False)
             return
 
-        buffer_name = f"tb-{os.getpid()}-{int(time.time() * 1000)}"
-        encoded = sanitized.encode("utf-8")
-        _run(["tmux", "load-buffer", "-b", buffer_name, "-"], input=encoded, check=True)
+        # Pane-oriented: bracketed paste + unique tmux buffer + cleanup
+        self._ensure_not_in_copy_mode(pane_id)
+        buffer_name = f"ccb-tb-{os.getpid()}-{int(time.time() * 1000)}"
+        self._tmux_run(["load-buffer", "-b", buffer_name, "-"], check=True, input_bytes=sanitized.encode("utf-8"))
         try:
-            _run(["tmux", "paste-buffer", "-t", session, "-b", buffer_name, "-p"], check=True)
+            self._tmux_run(["paste-buffer", "-p", "-t", pane_id, "-b", buffer_name], check=True)
             enter_delay = _env_float("CCB_TMUX_ENTER_DELAY", 0.0)
             if enter_delay:
                 time.sleep(enter_delay)
-            _run(["tmux", "send-keys", "-t", session, "Enter"], check=True)
+            self._tmux_run(["send-keys", "-t", pane_id, "Enter"], check=True)
         finally:
-            _run(["tmux", "delete-buffer", "-b", buffer_name], stderr=subprocess.DEVNULL)
+            self._tmux_run(["delete-buffer", "-b", buffer_name], check=False)
 
-    def is_alive(self, session: str) -> bool:
-        result = _run(["tmux", "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return result.returncode == 0
-
-    def kill_pane(self, session: str) -> None:
-        _run(["tmux", "kill-session", "-t", session], stderr=subprocess.DEVNULL)
-
-    def activate(self, session: str) -> None:
-        _run(["tmux", "attach", "-t", session])
-
-    def create_pane(self, cmd: str, cwd: str, direction: str = "right", percent: int = 50, parent_pane: Optional[str] = None) -> str:
-        session_name = f"ai-{int(time.time()) % 100000}-{os.getpid()}"
-        _run(["tmux", "new-session", "-d", "-s", session_name, "-c", cwd, cmd], check=True)
-        return session_name
-
-
-class Iterm2Backend(TerminalBackend):
-    """iTerm2 backend, using it2 CLI (pip install it2)"""
-    _it2_bin: Optional[str] = None
-
-    @classmethod
-    def _bin(cls) -> str:
-        if cls._it2_bin:
-            return cls._it2_bin
-        override = os.environ.get("CODEX_IT2_BIN") or os.environ.get("IT2_BIN")
-        if override:
-            cls._it2_bin = override
-            return override
-        cls._it2_bin = shutil.which("it2") or "it2"
-        return cls._it2_bin
-
-    def send_text(self, session_id: str, text: str) -> None:
-        sanitized = text.replace("\r", "").strip()
-        if not sanitized:
-            return
-        # Similar to WezTerm: send text first, then send Enter
-        # it2 session send sends text (without newline)
-        _run(
-            [self._bin(), "session", "send", sanitized, "--session", session_id],
-            check=True,
-        )
-        # Wait a bit for TUI to process input
-        time.sleep(0.01)
-        # Send Enter key (using \r)
-        _run(
-            [self._bin(), "session", "send", "\r", "--session", session_id],
-            check=True,
-        )
-
-    def is_alive(self, session_id: str) -> bool:
+    def send_key(self, pane_id: str, key: str) -> bool:
+        key = (key or "").strip()
+        if not pane_id or not key:
+            return False
         try:
-            result = _run(
-                [self._bin(), "session", "list", "--json"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-            if result.returncode != 0:
-                return False
-            sessions = json.loads(result.stdout)
-            return any(s.get("id") == session_id for s in sessions)
+            cp = self._tmux_run(["send-keys", "-t", pane_id, key], capture=True, timeout=2.0)
+            return cp.returncode == 0
         except Exception:
             return False
 
-    def kill_pane(self, session_id: str) -> None:
-        _run(
-            [self._bin(), "session", "close", "--session", session_id, "--force"],
-            stderr=subprocess.DEVNULL
-        )
+    def is_alive(self, pane_id: str) -> bool:
+        # Backward-compatible: pane_id may be a session name.
+        if not pane_id:
+            return False
+        if self._looks_like_tmux_target(pane_id):
+            return self.is_pane_alive(pane_id)
+        cp = self._tmux_run(["has-session", "-t", pane_id], capture=True)
+        return cp.returncode == 0
 
-    def activate(self, session_id: str) -> None:
-        _run([self._bin(), "session", "focus", session_id])
-
-    def create_pane(self, cmd: str, cwd: str, direction: str = "right", percent: int = 50, parent_pane: Optional[str] = None) -> str:
-        # iTerm2 split: vertical corresponds to right, horizontal to bottom
-        args = [self._bin(), "session", "split"]
-        if direction == "right":
-            args.append("--vertical")
-        # If parent_pane specified, target that session
-        if parent_pane:
-            args.extend(["--session", parent_pane])
-
-        result = _run(args, capture_output=True, text=True, check=True, encoding="utf-8", errors="replace")
-        # it2 output format: "Created new pane: <session_id>"
-        output = result.stdout.strip()
-        if ":" in output:
-            new_session_id = output.split(":")[-1].strip()
+    def kill_pane(self, pane_id: str) -> None:
+        if not pane_id:
+            return
+        if self._looks_like_tmux_target(pane_id):
+            self._tmux_run(["kill-pane", "-t", pane_id], check=False)
         else:
-            # Try to get from stderr or elsewhere
-            new_session_id = output
+            # Legacy: treat as session name.
+            self._tmux_run(["kill-session", "-t", pane_id], check=False)
 
-        # Execute startup command in new pane
-        if new_session_id and cmd:
-            # First cd to work directory, then execute command
-            full_cmd = f"cd {shlex.quote(cwd)} && {cmd}"
-            time.sleep(0.2)  # Wait for pane ready
-            # Use send + Enter, consistent with send_text
-            _run(
-                [self._bin(), "session", "send", full_cmd, "--session", new_session_id],
-                check=True
-            )
-            time.sleep(0.01)
-            _run(
-                [self._bin(), "session", "send", "\r", "--session", new_session_id],
-                check=True
-            )
+    def activate(self, pane_id: str) -> None:
+        # Best-effort: focus pane if inside tmux; otherwise attach its session if resolvable.
+        if not pane_id:
+            return
+        if self._looks_like_tmux_target(pane_id):
+            self._tmux_run(["select-pane", "-t", pane_id], check=False)
+            if not os.environ.get("TMUX"):
+                try:
+                    cp = self._tmux_run(["display-message", "-p", "-t", pane_id, "#{session_name}"], capture=True)
+                    sess = (cp.stdout or "").strip()
+                    if sess:
+                        self._tmux_run(["attach", "-t", sess], check=False)
+                except Exception:
+                    pass
+            return
+        self._tmux_run(["attach", "-t", pane_id], check=False)
 
-        return new_session_id
+    def respawn_pane(self, pane_id: str, *, cmd: str, cwd: str | None = None,
+                     stderr_log_path: str | None = None, remain_on_exit: bool = True) -> None:
+        """
+        Respawn a pane process (`respawn-pane -k`) to (re)mount an AI CLI session.
+
+        This is daemon-friendly: pane stays stable; only the process is replaced.
+        """
+        if not pane_id:
+            raise ValueError("pane_id is required")
+        user_shell = os.environ.get("SHELL") or _default_shell()[0]
+        cmd_body = cmd or ""
+        if cwd and cwd not in (".", ""):
+            cmd_body = f"cd {shlex.quote(cwd)} && {cmd_body}"
+        if stderr_log_path:
+            log_dir = str(Path(stderr_log_path).expanduser().resolve().parent)
+            cmd_body = f"mkdir -p {shlex.quote(log_dir)} && {cmd_body} 2>> {shlex.quote(stderr_log_path)}"
+        full = f"{user_shell} -ilc {shlex.quote(cmd_body)}"
+        self._tmux_run(["respawn-pane", "-k", "-t", pane_id, full], check=True)
+        if remain_on_exit:
+            self._tmux_run(["set-option", "-p", "-t", pane_id, "remain-on-exit", "on"], check=False)
+
+    def save_crash_log(self, pane_id: str, crash_log_path: str, *, lines: int = 1000) -> None:
+        text = self.get_pane_content(pane_id, lines=lines) or ""
+        p = Path(crash_log_path).expanduser()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    def create_pane(self, cmd: str, cwd: str, direction: str = "right", percent: int = 50,
+                    parent_pane: Optional[str] = None) -> str:
+        """
+        Create a new pane and run `cmd` inside it.
+
+        - If `parent_pane` is provided (or we are inside tmux), split that pane.
+        - If called outside tmux without `parent_pane`, create a detached session and return its root pane id.
+        """
+        cmd = (cmd or "").strip()
+        cwd = (cwd or ".").strip() or "."
+
+        if parent_pane or os.environ.get("TMUX_PANE"):
+            base = parent_pane or self.get_current_pane_id()
+            new_pane = self.split_pane(base, direction=direction, percent=percent)
+            if cmd:
+                self.respawn_pane(new_pane, cmd=cmd, cwd=cwd)
+            return new_pane
+
+        # Outside tmux: create a new detached tmux session as a root container.
+        session_name = f"ccb-{Path(cwd).name}-{int(time.time()) % 100000}-{os.getpid()}"
+        self._tmux_run(["new-session", "-d", "-s", session_name, "-c", cwd], check=True)
+        cp = self._tmux_run(["list-panes", "-t", session_name, "-F", "#{pane_id}"], capture=True, check=True)
+        pane_id = (cp.stdout or "").splitlines()[0].strip() if (cp.stdout or "").strip() else ""
+        if not self._looks_like_pane_id(pane_id):
+            raise RuntimeError(f"tmux failed to resolve root pane_id for session {session_name!r}")
+        if cmd:
+            self.respawn_pane(pane_id, cmd=cmd, cwd=cwd)
+        return pane_id
 
 
 class WeztermBackend(TerminalBackend):
@@ -578,8 +734,6 @@ def detect_terminal() -> Optional[str]:
     # Priority: check current env vars (already running in a terminal)
     if os.environ.get("WEZTERM_PANE"):
         return "wezterm"
-    if os.environ.get("ITERM_SESSION_ID"):
-        return "iterm2"
     if os.environ.get("TMUX"):
         return "tmux"
     # Check configured binary override or cached path
@@ -625,4 +779,123 @@ def get_pane_id_from_session(session_data: dict) -> Optional[str]:
         return session_data.get("pane_id")
     elif terminal == "iterm2":
         return session_data.get("pane_id")
-    return session_data.get("tmux_session")
+    # tmux legacy: older session files used `tmux_session` as a pseudo pane_id.
+    # New tmux refactor stores real tmux pane IDs (`%12`) in `pane_id`.
+    return session_data.get("pane_id") or session_data.get("tmux_session")
+
+
+@dataclass(frozen=True)
+class LayoutResult:
+    panes: dict[str, str]      # provider -> pane_id
+    root_pane_id: str
+    needs_attach: bool
+    created_panes: list[str]
+
+
+def create_auto_layout(
+    providers: list[str],
+    *,
+    cwd: str,
+    root_pane_id: str | None = None,
+    tmux_session_name: str | None = None,
+    percent: int = 50,
+    set_markers: bool = True,
+    marker_prefix: str = "CCB",
+) -> LayoutResult:
+    """
+    Create tmux split layout for 1–4 providers, returning a provider->pane_id mapping.
+
+    Layout rules (matches docs/tmux-refactor-plan.md):
+    - 1 AI: no split
+    - 2 AI: left/right
+    - 3 AI: left 1 + right top/bottom 2
+    - 4 AI: 2x2 grid
+
+    Notes:
+    - This function only allocates panes (no provider commands launched).
+    - If `set_markers` is True, it sets pane titles to `{marker_prefix}-{provider}`.
+      Callers can pass a richer `marker_prefix` (e.g. include session_id) to avoid collisions.
+    """
+    if not providers:
+        raise ValueError("providers must not be empty")
+    if len(providers) > 4:
+        raise ValueError("providers max is 4 for auto layout")
+
+    backend = TmuxBackend()
+    created: list[str] = []
+    panes: dict[str, str] = {}
+
+    needs_attach = False
+
+    # Resolve/allocate root pane.
+    if root_pane_id:
+        root = root_pane_id
+    else:
+        # Prefer current pane when called from inside tmux.
+        try:
+            root = backend.get_current_pane_id()
+        except Exception:
+            # Daemon/outside tmux: create a detached session as a container.
+            session_name = (tmux_session_name or f"ccb-{Path(cwd).name}-{int(time.time()) % 100000}-{os.getpid()}").strip()
+            if session_name:
+                # Reuse if already exists; else create.
+                if not backend.is_alive(session_name):
+                    backend._tmux_run(["new-session", "-d", "-s", session_name, "-c", cwd], check=True)
+                cp = backend._tmux_run(["list-panes", "-t", session_name, "-F", "#{pane_id}"], capture=True, check=True)
+                root = (cp.stdout or "").splitlines()[0].strip() if (cp.stdout or "").strip() else ""
+            else:
+                root = backend.create_pane("", cwd)
+            if not root or not root.startswith("%"):
+                raise RuntimeError("failed to allocate tmux root pane")
+            created.append(root)
+            needs_attach = (os.environ.get("TMUX") or "").strip() == ""
+
+    panes[providers[0]] = root
+
+    # Helper to set pane marker title
+    def _mark(provider: str, pane_id: str) -> None:
+        if not set_markers:
+            return
+        backend.set_pane_title(pane_id, f"{marker_prefix}-{provider}")
+
+    _mark(providers[0], root)
+
+    if len(providers) == 1:
+        return LayoutResult(panes=panes, root_pane_id=root, needs_attach=needs_attach, created_panes=created)
+
+    pct = max(1, min(99, int(percent)))
+
+    if len(providers) == 2:
+        right = backend.split_pane(root, "right", pct)
+        created.append(right)
+        panes[providers[1]] = right
+        _mark(providers[1], right)
+        return LayoutResult(panes=panes, root_pane_id=root, needs_attach=needs_attach, created_panes=created)
+
+    if len(providers) == 3:
+        right_top = backend.split_pane(root, "right", pct)
+        created.append(right_top)
+        right_bottom = backend.split_pane(right_top, "bottom", pct)
+        created.append(right_bottom)
+        panes[providers[1]] = right_top
+        panes[providers[2]] = right_bottom
+        _mark(providers[1], right_top)
+        _mark(providers[2], right_bottom)
+        return LayoutResult(panes=panes, root_pane_id=root, needs_attach=needs_attach, created_panes=created)
+
+    # 4 providers: 2x2 grid
+    right_top = backend.split_pane(root, "right", pct)
+    created.append(right_top)
+    left_bottom = backend.split_pane(root, "bottom", pct)
+    created.append(left_bottom)
+    right_bottom = backend.split_pane(right_top, "bottom", pct)
+    created.append(right_bottom)
+
+    panes[providers[1]] = right_top
+    panes[providers[2]] = left_bottom
+    panes[providers[3]] = right_bottom
+    _mark(providers[1], right_top)
+    _mark(providers[2], left_bottom)
+    _mark(providers[3], right_bottom)
+
+    return LayoutResult(panes=panes, root_pane_id=root, needs_attach=needs_attach, created_panes=created)
