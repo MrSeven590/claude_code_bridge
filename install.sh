@@ -991,6 +991,18 @@ sys.stdout.write(content.replace('@CCB_BIN_DIR@', bin_dir))
   echo "   - Vi-style pane management with h/j/k/l"
   echo "   - Mouse support and better copy mode"
   echo "   - Run 'tmux source ~/.tmux.conf' to apply (or restart tmux)"
+
+  # Best-effort: if a tmux server is already running, reload config automatically.
+  # (Avoid spawning a new server when tmux isn't running.)
+  if command -v tmux >/dev/null 2>&1; then
+    if tmux list-sessions >/dev/null 2>&1; then
+      if tmux source-file "$tmux_conf" >/dev/null 2>&1; then
+        echo "Reloaded tmux configuration in running server."
+      else
+        echo "WARN: Failed to reload tmux configuration automatically; run: tmux source ~/.tmux.conf"
+      fi
+    fi
+  fi
 }
 
 uninstall_tmux_config() {

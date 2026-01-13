@@ -2055,10 +2055,59 @@ def _get_remote_version_info() -> dict | None:
 
 def _detect_cca() -> tuple[str | None, str | None]:
     """Detect CCA installation. Returns (cca_path, install_dir)"""
+    def _is_executable(p: Path) -> bool:
+        try:
+            if not p.exists() or not p.is_file():
+                return False
+            if platform.system() == "Windows":
+                return True
+            return os.access(str(p), os.X_OK)
+        except Exception:
+            return False
+
+    def _infer_install_dir_from_exe(exe: Path) -> Path:
+        exe = exe.resolve()
+        # Prefer the default Unix/macOS install location when applicable.
+        default_unix_dir = Path.home() / ".local/share/claude_code_autoflow"
+        try:
+            if default_unix_dir in exe.parents:
+                return default_unix_dir
+        except Exception:
+            pass
+
+        # Otherwise, walk upwards to find a repo/install root marker.
+        for parent in [exe.parent, *exe.parents]:
+            if (parent / ".git").exists():
+                return parent
+            if (parent / "install.sh").exists() or (parent / "install.ps1").exists():
+                return parent
+        return exe.parent
+
+    def _detect_from_install_dir(install_dir: Path) -> tuple[str | None, str | None]:
+        if not install_dir.exists() or not install_dir.is_dir():
+            return None, None
+        if platform.system() == "Windows":
+            exe_candidates = [
+                install_dir / "bin" / "cca.cmd",
+                install_dir / "cca.cmd",
+                install_dir / "cca.ps1",
+                install_dir / "bin" / "cca.ps1",
+            ]
+        else:
+            exe_candidates = [
+                install_dir / "bin" / "cca",
+                install_dir / "cca",
+            ]
+        for exe in exe_candidates:
+            if _is_executable(exe):
+                return str(exe), str(install_dir)
+        return None, None
+
     cca_path = shutil.which("cca")
     if cca_path:
-        install_dir = Path(cca_path).resolve().parent
-        return cca_path, str(install_dir)
+        exe = Path(cca_path)
+        install_dir = _infer_install_dir_from_exe(exe)
+        return str(exe.resolve()), str(install_dir)
     candidates = [
         Path.home() / ".local/share/claude_code_autoflow",
         Path.home() / ".local/bin/cca",
@@ -2079,8 +2128,17 @@ def _detect_cca() -> tuple[str | None, str | None]:
             Path.home() / "AppData/Local/claude_code_autoflow",
         ])
     for p in candidates:
-        if p.exists():
-            return str(p), str(p.parent if p.is_file() else p)
+        if not p.exists():
+            continue
+        if p.is_dir():
+            exe, install_dir = _detect_from_install_dir(p)
+            if exe:
+                return exe, install_dir
+            continue
+        if _is_executable(p):
+            exe = p.resolve()
+            install_dir = _infer_install_dir_from_exe(exe)
+            return str(exe), str(install_dir)
     return None, None
 
 

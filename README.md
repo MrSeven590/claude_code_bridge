@@ -1,6 +1,6 @@
 <div align="center">
 
-# Claude Code Bridge (ccb) v4.0.1
+# Claude Code Bridge (ccb) v4.0.2
 
 **Silky Smooth Claude & Codex & Gemini Collaboration via Split-Pane Terminal**
 
@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/Every_Model_Controllable-CF1322?style=for-the-badge" alt="Every Model Controllable">
 </p>
 
-[![Version](https://img.shields.io/badge/version-4.0.1-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-4.0.2-orange.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![CI](https://github.com/bfly123/claude_code_bridge/actions/workflows/test.yml/badge.svg)](https://github.com/bfly123/claude_code_bridge/actions/workflows/test.yml)
@@ -393,6 +393,12 @@ Once started, collaborate naturally. Claude will detect when to delegate tasks.
 
 <details>
 <summary><b>Version History</b></summary>
+
+### v4.0.2
+- **CCA Detection**: Improved install directory inference for various layouts
+- **Clipboard Paste**: Cross-platform support (xclip/wl-paste/pbpaste) in tmux config
+- **Install UX**: Auto-reload tmux config after installation
+- **Stability**: Default TMUX_ENTER_DELAY set to 0.5s for better reliability
 
 ### v4.0.1
 - **Tokyo Night Theme**: Switch tmux status bar and pane borders to Tokyo Night color palette

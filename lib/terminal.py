@@ -435,7 +435,7 @@ class TmuxBackend(TerminalBackend):
             self._tmux_run(["load-buffer", "-b", buffer_name, "-"], check=True, input_bytes=sanitized.encode("utf-8"))
             try:
                 self._tmux_run(["paste-buffer", "-t", session, "-b", buffer_name, "-p"], check=True)
-                enter_delay = _env_float("CCB_TMUX_ENTER_DELAY", 0.0)
+                enter_delay = _env_float("CCB_TMUX_ENTER_DELAY", 0.5)
                 if enter_delay:
                     time.sleep(enter_delay)
                 self._tmux_run(["send-keys", "-t", session, "Enter"], check=True)
@@ -449,7 +449,7 @@ class TmuxBackend(TerminalBackend):
         self._tmux_run(["load-buffer", "-b", buffer_name, "-"], check=True, input_bytes=sanitized.encode("utf-8"))
         try:
             self._tmux_run(["paste-buffer", "-p", "-t", pane_id, "-b", buffer_name], check=True)
-            enter_delay = _env_float("CCB_TMUX_ENTER_DELAY", 0.0)
+            enter_delay = _env_float("CCB_TMUX_ENTER_DELAY", 0.5)
             if enter_delay:
                 time.sleep(enter_delay)
             self._tmux_run(["send-keys", "-t", pane_id, "Enter"], check=True)
