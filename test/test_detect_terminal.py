@@ -31,3 +31,16 @@ def test_detect_terminal_does_not_force_wezterm_when_not_inside_wezterm(monkeypa
     _clear_terminal_env(monkeypatch)
     monkeypatch.setattr(terminal, "_get_wezterm_bin", lambda: "/usr/bin/wezterm")
     assert terminal.detect_terminal() is None
+
+
+def test_detect_terminal_wsl_probe_can_select_wezterm(monkeypatch) -> None:
+    _clear_terminal_env(monkeypatch)
+    monkeypatch.setattr(terminal, "is_wsl", lambda: True)
+    monkeypatch.setattr(terminal, "_is_windows_wezterm", lambda: True)
+    monkeypatch.setattr(terminal, "_get_wezterm_bin", lambda: "/mnt/c/Program Files/WezTerm/wezterm.exe")
+
+    def fake_run(*args, **kwargs):
+        return terminal.subprocess.CompletedProcess(args=args[0], returncode=0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(terminal, "_run", fake_run)
+    assert terminal.detect_terminal() == "wezterm"

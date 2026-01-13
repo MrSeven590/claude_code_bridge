@@ -846,10 +846,35 @@ def detect_terminal() -> Optional[str]:
     if os.environ.get("TMUX") or os.environ.get("TMUX_PANE"):
         return "tmux"
 
-    # Only detect the *current* terminal environment here.
-    # Availability checks (e.g. whether wezterm is installed) should not force the backend
-    # when the user is running ccb in a different terminal.
+    # WSL-specific: WezTerm on Windows does not always propagate WEZTERM_PANE into tmux server env
+    # (or custom shells), but wezterm CLI may still be reachable via interop.
+    if is_wsl() and _is_windows_wezterm() and _wezterm_cli_is_alive():
+        return "wezterm"
+
     return None
+
+
+def _wezterm_cli_is_alive(*, timeout_s: float = 0.8) -> bool:
+    """
+    Best-effort probe to see if `wezterm cli` can reach a running WezTerm instance.
+
+    Uses `--no-auto-start` so it won't pop up a new terminal window.
+    """
+    wez = _get_wezterm_bin()
+    if not wez:
+        return False
+    try:
+        cp = _run(
+            [wez, "cli", "--no-auto-start", "list"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=max(0.1, float(timeout_s)),
+        )
+        return cp.returncode == 0
+    except Exception:
+        return False
 
 
 def get_backend(terminal_type: Optional[str] = None) -> Optional[TerminalBackend]:
