@@ -53,7 +53,7 @@ People keep asking how this differs from other workflow tools. My one-sentence a
 > **Rebuilt for tmux-first, any terminal, and remote workflows**
 
 - **Full Refactor**: Cleaner structure, better stability, and easier extension.
-- **Terminal Backend Abstraction**: Unified terminal layer (`TmuxBackend` / `WeztermBackend` / `Iterm2Backend`) with auto-detection and WSL path handling.
+- **Terminal Backend Abstraction**: Unified terminal layer (`TmuxBackend` / `WeztermBackend`) with auto-detection and WSL path handling.
 - **Perfect tmux Experience**: Stable layouts + pane titles/borders + session-scoped theming that restores on exit.
 - **Works in Any Terminal**: If your terminal can run tmux, CCB can provide the full multi-model split experience (except native Windows; WezTerm recommended; otherwise just use tmux).
 

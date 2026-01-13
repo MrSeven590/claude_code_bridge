@@ -323,74 +323,6 @@ print_tmux_install_hint() {
   esac
 }
 
-# Detect if running in iTerm2 environment
-is_iterm2_environment() {
-  # Check ITERM_SESSION_ID environment variable
-  if [[ -n "${ITERM_SESSION_ID:-}" ]]; then
-    return 0
-  fi
-  # Check TERM_PROGRAM
-  if [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then
-    return 0
-  fi
-  # Check if iTerm2 is running on macOS
-  if [[ "$(uname)" == "Darwin" ]] && pgrep -x "iTerm2" >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
-}
-
-# Install it2 CLI
-install_it2() {
-  echo
-  echo "INFO: Installing it2 CLI..."
-
-  if ! pick_python_bin; then
-    echo "ERROR: Python 3.10+ not found, cannot auto-install it2"
-    echo "   Please install Python 3.10+ and retry"
-    return 1
-  fi
-  if ! "$PYTHON_BIN" -m pip --version >/dev/null 2>&1; then
-    echo "ERROR: pip not found for ${PYTHON_BIN}, cannot auto-install it2"
-    echo "   Please run manually: ${PYTHON_BIN} -m pip install it2"
-    return 1
-  fi
-
-  # Install it2
-  if "$PYTHON_BIN" -m pip install it2 --user 2>&1; then
-    echo "OK: it2 CLI installed successfully"
-
-    # Check if in PATH
-    if ! command -v it2 >/dev/null 2>&1; then
-      local user_bin
-      user_bin="$("$PYTHON_BIN" -m site --user-base)/bin"
-      echo
-      echo "WARN: it2 may not be in PATH, please add the following to your shell config:"
-      echo "   export PATH=\"$user_bin:\$PATH\""
-    fi
-    return 0
-  else
-    echo "ERROR: it2 installation failed"
-    return 1
-  fi
-}
-
-# Show iTerm2 Python API enable reminder
-show_iterm2_api_reminder() {
-  echo
-  echo "================================================================"
-  echo "IMPORTANT: Please enable Python API in iTerm2"
-  echo "================================================================"
-  echo "   Steps:"
-  echo "   1. Open iTerm2"
-  echo "   2. Go to Preferences (Cmd + ,)"
-  echo "   3. Select Magic tab"
-  echo "   4. Check \"Enable Python API\""
-  echo "   5. Confirm the warning dialog"
-  echo "================================================================"
-  echo
-}
-
 require_terminal_backend() {
   local wezterm_override="${CODEX_WEZTERM_BIN:-${WEZTERM_BIN:-}}"
 
@@ -410,32 +342,7 @@ require_terminal_backend() {
     fi
   fi
 
-  # 2. If running in iTerm2 environment
-  if is_iterm2_environment; then
-    # Check if it2 is installed
-    if command -v it2 >/dev/null 2>&1; then
-      echo "OK: Detected iTerm2 environment (it2 CLI installed)"
-      echo "   NOTE: Please ensure iTerm2 Python API is enabled (Preferences > Magic > Enable Python API)"
-      return
-    fi
-
-    # it2 not installed, ask to install
-    echo "INFO: Detected iTerm2 environment but it2 CLI not installed"
-    echo
-    read -p "Auto-install it2 CLI? (Y/n): " -n 1 -r
-    echo
-
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-      if install_it2; then
-        show_iterm2_api_reminder
-        return
-      fi
-    else
-      echo "Skipping it2 installation, will use tmux as fallback"
-    fi
-  fi
-
-  # 3. If running in tmux environment
+  # 2. If running in tmux environment
   if [[ -n "${TMUX:-}" ]]; then
     echo "OK: Detected tmux environment"
     return
@@ -445,7 +352,7 @@ require_terminal_backend() {
   # Not in specific environment, detect by availability
   # ============================================
 
-  # 4. Check WezTerm environment variable override
+  # 3. Check WezTerm environment variable override
   if [[ -n "${wezterm_override}" ]]; then
     if command -v "${wezterm_override}" >/dev/null 2>&1 || [[ -f "${wezterm_override}" ]]; then
       echo "OK: Detected WezTerm (${wezterm_override})"
@@ -453,7 +360,7 @@ require_terminal_backend() {
     fi
   fi
 
-  # 5. Check WezTerm command
+  # 4. Check WezTerm command
   if command -v wezterm >/dev/null 2>&1 || command -v wezterm.exe >/dev/null 2>&1; then
     echo "OK: Detected WezTerm"
     return
@@ -471,28 +378,20 @@ require_terminal_backend() {
     fi
   fi
 
-  # 6. Check it2 CLI
-  if command -v it2 >/dev/null 2>&1; then
-    echo "OK: Detected it2 CLI"
-    return
-  fi
-
-  # 7. Check tmux
+  # 5. Check tmux
   if command -v tmux >/dev/null 2>&1; then
     echo "OK: Detected tmux (recommend also installing WezTerm for better experience)"
     return
   fi
 
-  # 8. No terminal multiplexer found
-  echo "ERROR: Missing dependency: WezTerm, tmux or it2 (at least one required)"
+  # 6. No terminal multiplexer found
+  echo "ERROR: Missing dependency: WezTerm or tmux (at least one required)"
   echo "   WezTerm website: https://wezfurlong.org/wezterm/"
 
-  # Extra hint for macOS users about iTerm2 + it2
   if [[ "$(uname)" == "Darwin" ]]; then
     echo
     echo "NOTE: macOS user recommended options:"
-    echo "   - If using iTerm2, install it2 CLI: pip3 install it2"
-    echo "   - Or install tmux: brew install tmux"
+    echo "   - Install tmux: brew install tmux"
   fi
 
   print_tmux_install_hint
@@ -818,7 +717,7 @@ install_claude_md_config() {
   cat > "$ccb_tmpfile" << 'AI_RULES'
 <!-- CCB_CONFIG_START -->
 ## Collaboration Rules (Codex / Gemini / OpenCode)
-Codex, Gemini, and OpenCode are other AI assistants running in separate terminal sessions (WezTerm, iTerm2, or tmux).
+Codex, Gemini, and OpenCode are other AI assistants running in separate terminal sessions (WezTerm or tmux).
 
 ### Common Rules (all assistants)
 Trigger (any match):
@@ -1339,7 +1238,7 @@ uninstall_all() {
   uninstall_tmux_config
 
   echo "OK: Uninstall complete"
-  echo "   NOTE: Dependencies (python, tmux, wezterm, it2) were not removed"
+  echo "   NOTE: Dependencies (python, tmux, wezterm) were not removed"
 }
 
 main() {

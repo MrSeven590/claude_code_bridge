@@ -3,7 +3,7 @@
 ccb-layout - Start a 2x2 four-AI layout (Claude + Codex + Gemini + OpenCode).
 
 Implementation: delegate to `ccb up codex gemini opencode`.
-- WezTerm/iTerm2: ccb uses a 2x2 grid when all three backends are present.
+- WezTerm: ccb uses a 2x2 grid when all three backends are present.
 - tmux: if `ccb up` is executed inside tmux, ccb uses splits in the current window.
 """
 

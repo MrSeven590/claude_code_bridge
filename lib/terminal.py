@@ -291,6 +291,16 @@ class TmuxBackend(TerminalBackend):
         """
         if not parent_pane_id:
             raise ValueError("parent_pane_id is required")
+
+        if self._looks_like_pane_id(parent_pane_id) and not self.is_pane_alive(parent_pane_id):
+            raise RuntimeError(f"Cannot split: pane {parent_pane_id} does not exist or is dead")
+
+        size_cp = self._tmux_run(
+            ["display-message", "-p", "-t", parent_pane_id, "#{pane_width}x#{pane_height}"],
+            capture=True,
+        )
+        pane_size = (size_cp.stdout or "").strip() if size_cp.returncode == 0 else "unknown"
+
         direction_norm = (direction or "").strip().lower()
         if direction_norm in ("right", "h", "horizontal"):
             flag = "-h"
@@ -300,11 +310,20 @@ class TmuxBackend(TerminalBackend):
             raise ValueError(f"unsupported direction: {direction!r} (use 'right' or 'bottom')")
 
         pct = max(1, min(99, int(percent)))
-        cp = self._tmux_run(
-            ["split-window", flag, "-p", str(pct), "-t", parent_pane_id, "-P", "-F", "#{pane_id}"],
-            check=True,
-            capture=True,
-        )
+        try:
+            cp = self._tmux_run(
+                ["split-window", flag, "-p", str(pct), "-t", parent_pane_id, "-P", "-F", "#{pane_id}"],
+                check=True,
+                capture=True,
+            )
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip() if hasattr(e, "stderr") else ""
+            raise RuntimeError(
+                f"tmux split-window failed (exit {e.returncode}): {stderr or 'no stderr'}\n"
+                f"Pane: {parent_pane_id}, size: {pane_size}, direction: {direction_norm}\n"
+                f"Command: {' '.join(e.cmd)}\n"
+                f"Hint: Enlarge terminal window (min ~10 cols/rows per pane) or reduce number of providers."
+            ) from e
         pane_id = (cp.stdout or "").strip()
         if not self._looks_like_pane_id(pane_id):
             raise RuntimeError(f"tmux split-window did not return pane_id: {pane_id!r}")
@@ -562,20 +581,6 @@ class TmuxBackend(TerminalBackend):
         return pane_id
 
 
-class Iterm2Backend(TerminalBackend):
-    """Minimal placeholder for iTerm2 backend compatibility."""
-    def send_text(self, pane_id: str, text: str) -> None:
-        raise NotImplementedError("iTerm2 backend not implemented")
-    def is_alive(self, pane_id: str) -> bool:
-        return False
-    def kill_pane(self, pane_id: str) -> None:
-        pass
-    def activate(self, pane_id: str) -> None:
-        pass
-    def create_pane(self, cmd: str, cwd: str, direction: str = "right", percent: int = 50, parent_pane: Optional[str] = None) -> str:
-        raise NotImplementedError("iTerm2 backend not implemented")
-
-
 class WeztermBackend(TerminalBackend):
     _wezterm_bin: Optional[str] = None
     CCB_TITLE_MARKER = "CCB"
@@ -813,11 +818,6 @@ def detect_terminal() -> Optional[str]:
     # Note: "tmux is installed" != "we are in tmux", so don't auto-select tmux here.
     if _get_wezterm_bin():
         return "wezterm"
-    override = os.environ.get("CODEX_IT2_BIN") or os.environ.get("IT2_BIN")
-    if override and Path(override).expanduser().exists():
-        return "iterm2"
-    if shutil.which("it2"):
-        return "iterm2"
     return None
 
 
@@ -828,8 +828,6 @@ def get_backend(terminal_type: Optional[str] = None) -> Optional[TerminalBackend
     t = terminal_type or detect_terminal()
     if t == "wezterm":
         _backend_cache = WeztermBackend()
-    elif t == "iterm2":
-        _backend_cache = Iterm2Backend()
     elif t == "tmux":
         _backend_cache = TmuxBackend()
     return _backend_cache
@@ -839,16 +837,12 @@ def get_backend_for_session(session_data: dict) -> Optional[TerminalBackend]:
     terminal = session_data.get("terminal", "tmux")
     if terminal == "wezterm":
         return WeztermBackend()
-    elif terminal == "iterm2":
-        return Iterm2Backend()
     return TmuxBackend()
 
 
 def get_pane_id_from_session(session_data: dict) -> Optional[str]:
     terminal = session_data.get("terminal", "tmux")
     if terminal == "wezterm":
-        return session_data.get("pane_id")
-    elif terminal == "iterm2":
         return session_data.get("pane_id")
     # tmux legacy: older session files used `tmux_session` as a pseudo pane_id.
     # New tmux refactor stores real tmux pane IDs (`%12`) in `pane_id`.

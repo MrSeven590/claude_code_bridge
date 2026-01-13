@@ -19,7 +19,6 @@
 - ✅ 实现多种后端支持：
   - `TmuxBackend`
   - `WeztermBackend`
-  - `Iterm2Backend`
 - ⚙️ 支持终端自动检测与 WSL 路径处理
 
 ### 2. tmux UI 强化
@@ -53,4 +52,3 @@
 ## ⚠️ 注意事项
 
 - **版本号一致性**：请确保 `README` 版本标注与 `ccb` 入口脚本中的 `VERSION` 一致；如不一致，建议执行 `ccb update` 同步安装目录文件。
-

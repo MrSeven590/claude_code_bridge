@@ -2,7 +2,7 @@
 """
 ccb (Claude Code Bridge) - Unified AI Launcher
 Supports Claude + Codex / Claude + Gemini / all three simultaneously
-Supports tmux, WezTerm and iTerm2 terminals
+Supports tmux and WezTerm
 """
 
 import sys
@@ -25,7 +25,7 @@ from pathlib import Path
 
 script_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(script_dir / "lib"))
-from terminal import TmuxBackend, WeztermBackend, Iterm2Backend, detect_terminal, is_wsl, get_shell_type
+from terminal import TmuxBackend, WeztermBackend, detect_terminal, is_wsl, get_shell_type
 from compat import setup_windows_encoding
 from ccb_config import get_backend_env
 from session_utils import safe_write_session, check_session_writable
@@ -521,7 +521,6 @@ class AILauncher:
         self.tmux_sessions = {}
         self.tmux_panes = {}
         self.wezterm_panes = {}
-        self.iterm2_panes = {}
         self.processes = {}
 
     def _maybe_start_caskd(self) -> None:
@@ -546,7 +545,7 @@ class AILauncher:
             return
         if "codex" not in self.providers:
             return
-        if self.terminal_type not in ("wezterm", "iterm2"):
+        if self.terminal_type != "wezterm":
             return
         try:
             from caskd_daemon import ping_daemon, read_state
@@ -623,12 +622,9 @@ class AILauncher:
         # When inside tmux, use tmux
         if os.environ.get("TMUX") or os.environ.get("TMUX_PANE"):
             return "tmux"
-        # Only use iTerm2 split when in iTerm2 environment
-        if os.environ.get("ITERM_SESSION_ID"):
-            return "iterm2"
 
         # Not inside any multiplexer:
-        # Prefer split-capable terminals (WezTerm/iTerm2) when available,
+        # Prefer split-capable terminals (WezTerm) when available,
         # otherwise fall back to tmux auto-session creation.
         detected = detect_terminal()
         if detected:
@@ -753,8 +749,6 @@ class AILauncher:
         if self.terminal_type == "wezterm":
             print(f"🚀 {t('starting_backend', provider=provider.capitalize(), terminal='wezterm')}")
             return self._start_provider_wezterm(provider)
-        elif self.terminal_type == "iterm2":
-            return self._start_provider_iterm2(provider)
 
         # tmux mode: check if tmux is available
         if not shutil.which("tmux"):
@@ -843,65 +837,6 @@ class AILauncher:
             self._write_opencode_session(runtime, None, pane_id=pane_id, pane_title_marker=pane_title_marker, start_cmd=start_cmd)
 
         print(f"✅ {t('started_backend', provider=provider.capitalize(), terminal='wezterm pane', pane_id=pane_id)}")
-        return True
-
-    def _start_provider_iterm2(self, provider: str) -> bool:
-        runtime = self.runtime_dir / provider
-        runtime.mkdir(parents=True, exist_ok=True)
-
-        start_cmd = self._get_start_cmd(provider)
-        # In iTerm2 split, process exit will close pane; keep pane open by default to view exit info
-        keep_open = os.environ.get("CODEX_ITERM2_KEEP_OPEN", "1").lower() not in {"0", "false", "no", "off"}
-        if keep_open:
-            start_cmd = (
-                f"{start_cmd}; "
-                f"code=$?; "
-                f'echo; echo \"[{provider}] exited with code $code. Press Enter to close...\"; '
-                f"read -r _; "
-                f"exit $code"
-            )
-        want_grid = {"codex", "gemini", "opencode"}.issubset(set(self.providers))
-        current_pane = os.environ.get("ITERM_SESSION_ID")
-        if want_grid and current_pane:
-            if not self.iterm2_panes:
-                direction = "right"
-                parent_pane = current_pane
-            elif provider == "gemini":
-                direction = "bottom"
-                parent_pane = current_pane
-            else:
-                direction = "bottom"
-                parent_pane = self.iterm2_panes.get("codex") or next(iter(self.iterm2_panes.values()))
-        else:
-            direction = "right" if not self.iterm2_panes else "bottom"
-            parent_pane = None
-            if direction == "bottom":
-                try:
-                    parent_pane = next(iter(self.iterm2_panes.values()))
-                except StopIteration:
-                    parent_pane = None
-
-        backend = Iterm2Backend()
-        pane_id = backend.create_pane(
-            _build_export_path_cmd(self.script_dir / "bin") + start_cmd,
-            str(Path.cwd()),
-            direction=direction,
-            percent=50,
-            parent_pane=parent_pane,
-        )
-        self.iterm2_panes[provider] = pane_id
-
-        if provider == "codex":
-            input_fifo = runtime / "input.fifo"
-            output_fifo = runtime / "output.fifo"
-            # iTerm2 mode injects text via pane, no strong FIFO dependency
-            self._write_codex_session(runtime, None, input_fifo, output_fifo, pane_id=pane_id, codex_start_cmd=start_cmd)
-        elif provider == "gemini":
-            self._write_gemini_session(runtime, None, pane_id=pane_id, start_cmd=start_cmd)
-        else:
-            self._write_opencode_session(runtime, None, pane_id=pane_id, start_cmd=start_cmd)
-
-        print(f"✅ {t('started_backend', provider=provider.capitalize(), terminal='iterm2 session', pane_id=pane_id)}")
         return True
 
     def _work_dir_strings(self, work_dir: Path) -> list[str]:
@@ -1693,8 +1628,6 @@ class AILauncher:
             env["CODEX_TERMINAL"] = self.terminal_type
             if self.terminal_type == "wezterm":
                 env["CODEX_WEZTERM_PANE"] = self.wezterm_panes.get("codex", "")
-            elif self.terminal_type == "iterm2":
-                env["CODEX_ITERM2_PANE"] = self.iterm2_panes.get("codex", "")
             else:
                 env["CODEX_TMUX_SESSION"] = self.tmux_panes.get("codex", "")
 
@@ -1705,8 +1638,6 @@ class AILauncher:
             env["GEMINI_TERMINAL"] = self.terminal_type
             if self.terminal_type == "wezterm":
                 env["GEMINI_WEZTERM_PANE"] = self.wezterm_panes.get("gemini", "")
-            elif self.terminal_type == "iterm2":
-                env["GEMINI_ITERM2_PANE"] = self.iterm2_panes.get("gemini", "")
             else:
                 env["GEMINI_TMUX_SESSION"] = self.tmux_panes.get("gemini", "")
 
@@ -1717,8 +1648,6 @@ class AILauncher:
             env["OPENCODE_TERMINAL"] = self.terminal_type
             if self.terminal_type == "wezterm":
                 env["OPENCODE_WEZTERM_PANE"] = self.wezterm_panes.get("opencode", "")
-            elif self.terminal_type == "iterm2":
-                env["OPENCODE_ITERM2_PANE"] = self.iterm2_panes.get("opencode", "")
             else:
                 env["OPENCODE_TMUX_SESSION"] = self.tmux_panes.get("opencode", "")
 
@@ -1809,11 +1738,6 @@ class AILauncher:
             for provider, pane_id in self.wezterm_panes.items():
                 if pane_id:
                     backend.kill_pane(pane_id)
-        elif self.terminal_type == "iterm2":
-            backend = Iterm2Backend()
-            for provider, pane_id in self.iterm2_panes.items():
-                if pane_id:
-                    backend.kill_pane(pane_id)
         else:
             backend = TmuxBackend()
             for provider, pane_id in self.tmux_panes.items():
@@ -1891,7 +1815,7 @@ class AILauncher:
             pass
 
         providers = list(self.providers)
-        if self.terminal_type in ("wezterm", "iterm2") or (self.terminal_type == "tmux" and os.environ.get("TMUX_PANE")):
+        if self.terminal_type == "wezterm" or (self.terminal_type == "tmux" and os.environ.get("TMUX_PANE")):
             # Stable layout: codex on top, gemini on bottom (when both are present).
             order = {"codex": 0, "gemini": 1, "opencode": 2}
             providers.sort(key=lambda p: order.get(p, 99))
@@ -1936,13 +1860,10 @@ def cmd_kill(args):
         try:
             data = json.loads(session_file.read_text(encoding="utf-8-sig"))
             terminal = data.get("terminal", "tmux")
-            pane_id = data.get("pane_id") if terminal in ("wezterm", "iterm2") else (data.get("pane_id") or data.get("tmux_session") or "")
+            pane_id = data.get("pane_id") if terminal == "wezterm" else (data.get("pane_id") or data.get("tmux_session") or "")
 
             if terminal == "wezterm" and pane_id:
                 backend = WeztermBackend()
-                backend.kill_pane(pane_id)
-            elif terminal == "iterm2" and pane_id:
-                backend = Iterm2Backend()
                 backend.kill_pane(pane_id)
             elif pane_id and shutil.which("tmux"):
                 backend = TmuxBackend()

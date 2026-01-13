@@ -374,7 +374,7 @@ function Install-ClaudeConfig {
   $codexRules = @"
 <!-- CCB_CONFIG_START -->
 ## Collaboration Rules (Codex / Gemini / OpenCode)
-Codex, Gemini, and OpenCode are other AI assistants running in separate terminal sessions (WezTerm, iTerm2, or tmux).
+Codex, Gemini, and OpenCode are other AI assistants running in separate terminal sessions (WezTerm or tmux).
 
 ### Common Rules (all assistants)
 Trigger (any match):

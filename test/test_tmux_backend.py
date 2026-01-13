@@ -20,6 +20,10 @@ def test_tmux_split_pane_builds_command_and_parses_pane_id(monkeypatch: pytest.M
         calls.append(
             {"args": args, "check": check, "capture": capture, "input_bytes": input_bytes, "timeout": timeout}
         )
+        if args == ["display-message", "-p", "-t", "%1", "#{pane_dead}"]:
+            return _cp(stdout="0\n")
+        if args == ["display-message", "-p", "-t", "%1", "#{pane_width}x#{pane_height}"]:
+            return _cp(stdout="80x24\n")
         return _cp(stdout="%42\n")
 
     backend = terminal.TmuxBackend()
@@ -151,4 +155,3 @@ def test_tmux_kill_pane_prefers_pane_id_over_session(monkeypatch: pytest.MonkeyP
     calls.clear()
     backend.kill_pane("mysession")
     assert calls == [["kill-session", "-t", "mysession"]]
-

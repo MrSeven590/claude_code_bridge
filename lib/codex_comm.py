@@ -758,9 +758,9 @@ class CodexCommunicator:
             if not self.runtime_dir.exists():
                 return False, "Runtime directory does not exist"
 
-            # WezTerm/iTerm2 mode: no tmux wrapper, so codex.pid usually not generated;
+            # WezTerm mode: no tmux wrapper, so codex.pid usually not generated;
             # use pane liveness as health check (consistent with Gemini logic).
-            if self.terminal in ("wezterm", "iterm2"):
+            if self.terminal == "wezterm":
                 if not self.pane_id:
                     return False, f"{self.terminal} pane_id not found"
                 pane_alive = self._pane_alive(force=False)
@@ -842,8 +842,8 @@ class CodexCommunicator:
 
         state = self.log_reader.capture_state()
 
-        # tmux mode drives bridge via FIFO; WezTerm/iTerm2 mode injects text directly to pane
-        if self.terminal in ("wezterm", "iterm2"):
+        # tmux mode drives bridge via FIFO; WezTerm mode injects text directly to pane
+        if self.terminal == "wezterm":
             self._send_via_terminal(content)
         else:
             with open(self.input_fifo, "w", encoding="utf-8") as fifo:

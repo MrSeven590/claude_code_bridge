@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-caskd - Codex ask daemon (WezTerm/iTerm2).
+caskd - Codex ask daemon (WezTerm).
 
 Implements Scheme-2: per-session serialized sending + log-driven reply extraction with req_id.
 """
