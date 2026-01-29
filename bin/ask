@@ -272,9 +272,6 @@ def main(argv: list[str]) -> int:
         env = os.environ.copy()
         if not env.get("CCB_CALLER"):
             env["CCB_CALLER"] = _default_caller()
-        # In sync mode, suppress completion hook unless explicitly enabled.
-        if "CCB_COMPLETION_HOOK_ENABLED" not in env:
-            env["CCB_COMPLETION_HOOK_ENABLED"] = "0"
         try:
             result = subprocess.run(cmd, input=message, text=True, env=env)
             return result.returncode
