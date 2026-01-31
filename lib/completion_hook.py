@@ -31,6 +31,7 @@ def _run_hook_async(
     email_req_id: str = "",
     email_msg_id: str = "",
     email_from: str = "",
+    work_dir: str = "",
 ) -> None:
     """Run the completion hook in a background thread."""
     if not env_bool("CCB_COMPLETION_HOOK_ENABLED", True):
@@ -80,6 +81,9 @@ def _run_hook_async(
                 env["CCB_EMAIL_MSG_ID"] = email_msg_id
             if email_from:
                 env["CCB_EMAIL_FROM"] = email_from
+            # Pass work_dir for session file lookup
+            if work_dir:
+                env["CCB_WORK_DIR"] = work_dir
 
             # Pass reply via stdin to avoid command line length limits
             subprocess.run(cmd, input=(reply or "").encode("utf-8"), capture_output=True, timeout=10, env=env)
@@ -101,6 +105,7 @@ def notify_completion(
     email_req_id: str = "",
     email_msg_id: str = "",
     email_from: str = "",
+    work_dir: str = "",
 ) -> None:
     """
     Notify the caller that a CCB delegation task has completed.
@@ -115,8 +120,9 @@ def notify_completion(
         email_req_id: Email request ID (for email caller)
         email_msg_id: Original email Message-ID (for email caller)
         email_from: Original sender email address (for email caller)
+        work_dir: Working directory for session file lookup
     """
     if not done_seen:
         return
 
-    _run_hook_async(provider, output_file, reply, req_id, caller, email_req_id, email_msg_id, email_from)
+    _run_hook_async(provider, output_file, reply, req_id, caller, email_req_id, email_msg_id, email_from, work_dir)

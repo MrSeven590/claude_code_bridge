@@ -64,7 +64,7 @@ class CodexAdapter(BaseProviderAdapter):
         started_ms = _now_ms()
         req = task.request
         work_dir = Path(req.work_dir)
-        _write_log(f"[INFO] start provider=codex req_id={task.req_id} work_dir={req.work_dir}")
+        _write_log(f"[INFO] start provider=codex req_id={task.req_id} work_dir={req.work_dir} caller={req.caller}")
 
         session = load_project_session(work_dir)
         session_key = self.compute_session_key(session)
@@ -221,6 +221,9 @@ class CodexAdapter(BaseProviderAdapter):
             f"anchor={result.anchor_seen} done={result.done_seen}"
         )
 
+        # Log caller info before notify_completion
+        _write_log(f"[INFO] notify_completion caller={req.caller} done_seen={done_seen}")
+
         notify_completion(
             provider="codex",
             output_file=req.output_path,
@@ -231,6 +234,7 @@ class CodexAdapter(BaseProviderAdapter):
             email_req_id=req.email_req_id,
             email_msg_id=req.email_msg_id,
             email_from=req.email_from,
+            work_dir=req.work_dir,
         )
 
         return result

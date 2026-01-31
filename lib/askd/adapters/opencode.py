@@ -204,6 +204,7 @@ class OpenCodeAdapter(BaseProviderAdapter):
             email_req_id=req.email_req_id,
             email_msg_id=req.email_msg_id,
             email_from=req.email_from,
+            work_dir=req.work_dir,
         )
 
         result = ProviderResult(
