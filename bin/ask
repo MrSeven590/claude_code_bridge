@@ -375,11 +375,15 @@ Get-Content -Path "{msg_file}" -Encoding UTF8 | python "{ask_cmd}" {provider} --
                 if val:
                     email_env_lines += f'export {key}="{val}"\n'
 
+        # Pass CCB_RUN_DIR so background script can find askd state file
+        ccb_run_dir = os.environ.get("CCB_RUN_DIR", "")
+        run_dir_line = f'export CCB_RUN_DIR="{ccb_run_dir}"\n' if ccb_run_dir else ""
+
         bg_script = f'''
 export CCB_REQ_ID="{task_id}"
 export CCB_CALLER="{caller}"
 export CCB_WORK_DIR="{os.getcwd()}"
-{email_env_lines}python3 "{ask_cmd}" {provider} --foreground --timeout {timeout} <<'ASKEOF'
+{run_dir_line}{email_env_lines}python3 "{ask_cmd}" {provider} --foreground --timeout {timeout} <<'ASKEOF'
 {message}
 ASKEOF
 '''
