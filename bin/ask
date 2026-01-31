@@ -131,6 +131,12 @@ def _send_via_unified_daemon(
         "caller": caller,
     }
 
+    # Pass email-related env vars for email caller
+    if caller == "email":
+        req["email_req_id"] = os.environ.get("CCB_EMAIL_REQ_ID", "")
+        req["email_msg_id"] = os.environ.get("CCB_EMAIL_MSG_ID", "")
+        req["email_from"] = os.environ.get("CCB_EMAIL_FROM", "")
+
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout + 10 if timeout > 0 else 3610)
@@ -361,11 +367,19 @@ Get-Content -Path "{msg_file}" -Encoding UTF8 | python "{ask_cmd}" {provider} --
         )
     else:
         # Unix: use nohup, call ask --foreground to use unified daemon
+        # Collect CCB_EMAIL_* env vars for email caller
+        email_env_lines = ""
+        if caller == "email":
+            for key in ("CCB_EMAIL_REQ_ID", "CCB_EMAIL_MSG_ID", "CCB_EMAIL_FROM"):
+                val = os.environ.get(key, "")
+                if val:
+                    email_env_lines += f'export {key}="{val}"\n'
+
         bg_script = f'''
 export CCB_REQ_ID="{task_id}"
 export CCB_CALLER="{caller}"
 export CCB_WORK_DIR="{os.getcwd()}"
-python3 "{ask_cmd}" {provider} --foreground --timeout {timeout} <<'ASKEOF'
+{email_env_lines}python3 "{ask_cmd}" {provider} --foreground --timeout {timeout} <<'ASKEOF'
 {message}
 ASKEOF
 '''

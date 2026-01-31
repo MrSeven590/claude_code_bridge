@@ -24,6 +24,10 @@ class ProviderRequest:
     req_id: Optional[str] = None
     caller: str = "claude"
     no_wrap: bool = False
+    # Email-related fields for email caller
+    email_req_id: str = ""
+    email_msg_id: str = ""
+    email_from: str = ""
 
 
 @dataclass

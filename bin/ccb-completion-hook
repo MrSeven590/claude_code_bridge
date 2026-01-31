@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-CCB Completion Hook - Notifies Claude when a CCB delegation task completes.
+CCB Completion Hook - Notifies caller when a CCB delegation task completes.
 
 This script is called by caskd/gaskd/oaskd/daskd when they detect CCB_DONE signal.
-It sends a notification to Claude via lask to trigger auto-retrieval of results.
+- For terminal callers: sends notification to Claude/Codex/Droid pane
+- For email callers (CCB_CALLER=email): sends reply email via maild
 
 Usage:
     ccb-completion-hook.py --provider <provider> --output <output_file> [--reply <reply_text>]
@@ -11,6 +12,10 @@ Usage:
 Environment:
     CCB_COMPLETION_HOOK_ENABLED: Set to "0" to disable (default: "1")
     CCB_COMPLETION_HOOK_TIMEOUT: Timeout in seconds (default: 5)
+    CCB_CALLER: Who initiated the request (claude/codex/droid/email)
+    CCB_EMAIL_REQ_ID: Request ID for email replies
+    CCB_EMAIL_MSG_ID: Original email Message-ID for threading
+    CCB_EMAIL_FROM: Original sender email address
 """
 
 from __future__ import annotations
@@ -198,21 +203,117 @@ def find_ask_command() -> str | None:
     return None
 
 
+def send_email_reply(provider: str, reply_content: str) -> bool:
+    """Send reply via email when CCB_CALLER=email."""
+    try:
+        from mail import load_config, SmtpSender
+        from mail.ask_handler import load_email_context, cleanup_email_context
+        from email.header import decode_header
+    except ImportError as e:
+        print(f"[completion-hook] Failed to import mail module: {e}", file=sys.stderr)
+        return False
+
+    # Get email context from environment or saved file
+    req_id = os.environ.get("CCB_EMAIL_REQ_ID", "")
+    msg_id = os.environ.get("CCB_EMAIL_MSG_ID", "")
+    from_addr = os.environ.get("CCB_EMAIL_FROM", "")
+
+    # Try to load from saved context if env vars missing
+    original_subject = ""
+    references = ""
+    if req_id:
+        context = load_email_context(req_id)
+        if context:
+            msg_id = msg_id or context.get("message_id", "")
+            from_addr = from_addr or context.get("from_addr", "")
+            original_subject = context.get("subject", "")
+            references = context.get("references", "")
+
+    if not from_addr:
+        print("[completion-hook] No email recipient (CCB_EMAIL_FROM)", file=sys.stderr)
+        return False
+
+    # Load mail config and send
+    config = load_config()
+    if not config.enabled:
+        print("[completion-hook] Mail service not enabled", file=sys.stderr)
+        return False
+
+    # Decode MIME-encoded subject if needed
+    if original_subject:
+        try:
+            decoded_parts = decode_header(original_subject)
+            subject_parts = []
+            for part, charset in decoded_parts:
+                if isinstance(part, bytes):
+                    subject_parts.append(part.decode(charset or 'utf-8', errors='replace'))
+                else:
+                    subject_parts.append(part)
+            original_subject = ''.join(subject_parts)
+        except Exception:
+            pass
+
+    # Clean subject: remove Re:/回复：/回复: prefixes
+    subject = original_subject
+    if subject:
+        import re
+        # Remove common reply prefixes (case insensitive)
+        subject = re.sub(r'^(Re:\s*|RE:\s*|回复：\s*|回复:\s*)+', '', subject, flags=re.IGNORECASE)
+
+    if not subject:
+        subject = f"[CCB] {provider.capitalize()} response"
+
+    # Build references chain for threading
+    refs = ""
+    if references and msg_id:
+        refs = f"{references} {msg_id}"
+    elif references:
+        refs = references
+    elif msg_id:
+        refs = msg_id
+
+    sender = SmtpSender(config)
+    body = f"[{provider.capitalize()}] {reply_content}"
+
+    success, result = sender.send_reply(
+        to_addr=from_addr,
+        subject=subject,
+        body=body,
+        in_reply_to=msg_id if msg_id else None,
+        references=refs if refs else None,
+        provider=provider,
+    )
+
+    if success:
+        print(f"[completion-hook] Email reply sent to {from_addr}")
+        # Cleanup saved context
+        if req_id:
+            cleanup_email_context(req_id)
+        return True
+    else:
+        print(f"[completion-hook] Failed to send email: {result}", file=sys.stderr)
+        return False
+
+
 def main() -> int:
     if not env_bool("CCB_COMPLETION_HOOK_ENABLED", True):
         return 0
 
     parser = argparse.ArgumentParser(description="CCB Completion Hook")
-    parser.add_argument("--provider", required=True, help="Provider name (codex/gemini/opencode/droid)")
-    parser.add_argument("--caller", default="claude", help="Who initiated the request (claude/codex/droid)")
+    parser.add_argument("--provider", required=True, help="Provider name")
+    parser.add_argument("--caller", default="claude", help="Who initiated the request")
     parser.add_argument("--output", default="", help="Output file path (optional)")
     parser.add_argument("--reply", default="", help="Reply text (optional)")
     parser.add_argument("--req-id", default="", help="Request ID")
     args = parser.parse_args()
 
     provider = args.provider.lower()
-    caller = args.caller.lower()
     output_file = args.output or None
+
+    # Check CCB_CALLER env var first, then fall back to --caller arg
+    caller = os.environ.get("CCB_CALLER", "").strip().lower()
+    if not caller:
+        caller = args.caller.lower()
 
     # Read reply from stdin using cross-platform helper
     reply_content = ""
@@ -221,7 +322,13 @@ def main() -> int:
     if not reply_content:
         reply_content = args.reply or ""
 
-    # Construct notification message
+    # Handle email caller - send reply via email
+    if caller == "email":
+        if send_email_reply(provider, reply_content):
+            return 0
+        return 1
+
+    # Terminal caller - construct notification message
     provider_names = {
         "codex": "Codex",
         "gemini": "Gemini",

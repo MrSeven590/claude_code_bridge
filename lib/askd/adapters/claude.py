@@ -409,6 +409,9 @@ class ClaudeAdapter(BaseProviderAdapter):
             req_id=result.req_id,
             done_seen=result.done_seen,
             caller=req.caller,
+            email_req_id=req.email_req_id,
+            email_msg_id=req.email_msg_id,
+            email_from=req.email_from,
         )
 
     def _wait_for_response(

@@ -241,6 +241,9 @@ class GeminiAdapter(BaseProviderAdapter):
             req_id=task.req_id,
             done_seen=done_seen,
             caller=req.caller,
+            email_req_id=req.email_req_id,
+            email_msg_id=req.email_msg_id,
+            email_from=req.email_from,
         )
 
         result = ProviderResult(

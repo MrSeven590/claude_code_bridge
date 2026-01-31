@@ -148,6 +148,9 @@ class UnifiedAskDaemon:
                 req_id=str(msg.get("req_id")) if msg.get("req_id") else None,
                 caller=str(msg.get("caller") or "claude"),
                 no_wrap=bool(msg.get("no_wrap") or False),
+                email_req_id=str(msg.get("email_req_id") or ""),
+                email_msg_id=str(msg.get("email_msg_id") or ""),
+                email_from=str(msg.get("email_from") or ""),
             )
         except Exception as exc:
             return {

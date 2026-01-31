@@ -22,7 +22,16 @@ def env_bool(name: str, default: bool = True) -> bool:
     return val not in ("0", "false", "no", "off")
 
 
-def _run_hook_async(provider: str, output_file: Optional[str], reply: str, req_id: str, caller: str) -> None:
+def _run_hook_async(
+    provider: str,
+    output_file: Optional[str],
+    reply: str,
+    req_id: str,
+    caller: str,
+    email_req_id: str = "",
+    email_msg_id: str = "",
+    email_from: str = "",
+) -> None:
     """Run the completion hook in a background thread."""
     if not env_bool("CCB_COMPLETION_HOOK_ENABLED", True):
         return
@@ -62,8 +71,18 @@ def _run_hook_async(provider: str, output_file: Optional[str], reply: str, req_i
             if output_file:
                 cmd.extend(["--output", output_file])
 
+            # Set up environment with caller and email-related vars
+            env = os.environ.copy()
+            env["CCB_CALLER"] = caller  # Ensure caller is passed via env var
+            if email_req_id:
+                env["CCB_EMAIL_REQ_ID"] = email_req_id
+            if email_msg_id:
+                env["CCB_EMAIL_MSG_ID"] = email_msg_id
+            if email_from:
+                env["CCB_EMAIL_FROM"] = email_from
+
             # Pass reply via stdin to avoid command line length limits
-            subprocess.run(cmd, input=(reply or "").encode("utf-8"), capture_output=True, timeout=10)
+            subprocess.run(cmd, input=(reply or "").encode("utf-8"), capture_output=True, timeout=10, env=env)
         except Exception:
             pass
 
@@ -79,6 +98,9 @@ def notify_completion(
     req_id: str,
     done_seen: bool,
     caller: str = "claude",
+    email_req_id: str = "",
+    email_msg_id: str = "",
+    email_from: str = "",
 ) -> None:
     """
     Notify the caller that a CCB delegation task has completed.
@@ -89,9 +111,12 @@ def notify_completion(
         reply: The reply text from the provider
         req_id: The request ID
         done_seen: Whether the CCB_DONE signal was detected
-        caller: Who initiated the request (claude, codex, droid)
+        caller: Who initiated the request (claude, codex, droid, email)
+        email_req_id: Email request ID (for email caller)
+        email_msg_id: Original email Message-ID (for email caller)
+        email_from: Original sender email address (for email caller)
     """
     if not done_seen:
         return
 
-    _run_hook_async(provider, output_file, reply, req_id, caller)
+    _run_hook_async(provider, output_file, reply, req_id, caller, email_req_id, email_msg_id, email_from)
