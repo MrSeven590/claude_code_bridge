@@ -90,7 +90,6 @@ def main(argv: list[str]) -> int:
 
     host, port = _parse_listen(args.listen)
 
-    # Parse providers list
     if args.providers:
         providers = [p.strip().lower() for p in args.providers.split(",") if p.strip()]
         invalid = [p for p in providers if p not in ALL_PROVIDERS]

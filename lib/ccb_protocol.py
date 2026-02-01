@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 
 REQ_ID_PREFIX = "CCB_REQ_ID:"
+BEGIN_PREFIX = "CCB_BEGIN:"
 DONE_PREFIX = "CCB_DONE:"
 
 DONE_LINE_RE_TEMPLATE = r"^\s*CCB_DONE:\s*{req_id}\s*$"

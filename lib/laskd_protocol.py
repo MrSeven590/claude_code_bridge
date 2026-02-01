@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ccb_protocol import (
+    BEGIN_PREFIX,
     DONE_PREFIX,
     REQ_ID_PREFIX,
     is_done_text,
@@ -16,6 +17,13 @@ from ccb_protocol import (
 # Match both old (32-char hex) and new (YYYYMMDD-HHMMSS-mmm-PID) req_id formats
 ANY_DONE_LINE_RE = re.compile(r"^\s*CCB_DONE:\s*(?:[0-9a-f]{32}|\d{8}-\d{6}-\d{3}-\d+)\s*$", re.IGNORECASE)
 _SKILL_CACHE: str | None = None
+
+
+def _wants_markdown_table(message: str) -> bool:
+    msg = (message or "").lower()
+    if "markdown" not in msg:
+        return False
+    return ("table" in msg) or ("\u8868\u683c" in message)
 
 
 def _env_bool(name: str, default: bool = True) -> bool:
@@ -71,6 +79,7 @@ def extract_reply_for_req(text: str, req_id: str) -> str:
 
     # Find last done-line index for this req_id (may not be last line if the model misbehaves).
     target_re = re.compile(rf"^\s*CCB_DONE:\s*{re.escape(req_id)}\s*$", re.IGNORECASE)
+    begin_re = re.compile(rf"^\s*{re.escape(BEGIN_PREFIX)}\s*{re.escape(req_id)}\s*$", re.IGNORECASE)
     done_idxs = [i for i, ln in enumerate(lines) if ANY_DONE_LINE_RE.match(ln or "")]
     target_idxs = [i for i in done_idxs if target_re.match(lines[i] or "")]
 
@@ -79,13 +88,21 @@ def extract_reply_for_req(text: str, req_id: str) -> str:
         return strip_done_text(text, req_id)
 
     target_i = target_idxs[-1]
-    prev_done_i = -1
-    for i in reversed(done_idxs):
-        if i < target_i:
-            prev_done_i = i
+    begin_i = None
+    for i in range(target_i - 1, -1, -1):
+        if begin_re.match(lines[i] or ""):
+            begin_i = i
             break
 
-    segment = lines[prev_done_i + 1 : target_i]
+    if begin_i is not None:
+        segment = lines[begin_i + 1 : target_i]
+    else:
+        prev_done_i = -1
+        for i in reversed(done_idxs):
+            if i < target_i:
+                prev_done_i = i
+                break
+        segment = lines[prev_done_i + 1 : target_i]
     # Trim leading/trailing blank lines for nicer output.
     while segment and segment[0].strip() == "":
         segment = segment[1:]
@@ -99,6 +116,9 @@ def wrap_claude_prompt(message: str, req_id: str) -> str:
     skills = _load_claude_skills()
     if skills:
         message = f"{skills}\n\n{message}".strip()
+    extra = ""
+    if _wants_markdown_table(message):
+        extra = "- If asked for a Markdown table, output only pipe-and-dash Markdown table syntax (no box-drawing characters).\n"
     return (
         f"{REQ_ID_PREFIX} {req_id}\n\n"
         f"{message}\n\n"
@@ -106,6 +126,9 @@ def wrap_claude_prompt(message: str, req_id: str) -> str:
         "- Reply with an execution summary, in English. Do not stay silent.\n"
         "- Respond in the main assistant only (no subagents/sidechains/tools).\n"
         "- Ensure the final CCB_DONE line is in the main assistant response.\n"
+        f"{extra}"
+        "- Begin your reply with this exact first line (verbatim, on its own line):\n"
+        f"{BEGIN_PREFIX} {req_id}\n"
         "- End your reply with this exact final line (verbatim, on its own line):\n"
         f"{DONE_PREFIX} {req_id}\n"
     )

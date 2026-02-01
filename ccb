@@ -4507,6 +4507,106 @@ def cmd_droid_test_delegation(_args) -> int:
     return 0
 
 
+def cmd_mail(argv: list[str]) -> int:
+    """Handle ccb mail subcommands."""
+    parser = argparse.ArgumentParser(prog="ccb mail", description="Mail service commands")
+    subparsers = parser.add_subparsers(dest="subcommand", help="Mail subcommands")
+
+    subparsers.add_parser("setup", help="Run mail configuration wizard")
+    subparsers.add_parser("start", help="Start mail daemon")
+    subparsers.add_parser("stop", help="Stop mail daemon")
+    subparsers.add_parser("status", help="Show mail service status")
+    subparsers.add_parser("test", help="Test mail connection")
+    subparsers.add_parser("config", help="Show current configuration")
+
+    args = parser.parse_args(argv)
+
+    if args.subcommand == "setup":
+        try:
+            from mail_tui import run_wizard
+            return 0 if run_wizard() else 1
+        except ImportError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    if args.subcommand == "start":
+        try:
+            from maild_client import start_mail_service
+            return 0 if start_mail_service() else 1
+        except ImportError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    if args.subcommand == "stop":
+        try:
+            from maild_client import stop_mail_service
+            return 0 if stop_mail_service() else 1
+        except ImportError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    if args.subcommand == "status":
+        try:
+            from maild_client import get_mail_status
+            status = get_mail_status()
+            print("Mail Service Status")
+            print("=" * 40)
+            print(f"  Configured: {'Yes' if status['configured'] else 'No'}")
+            print(f"  Enabled:    {'Yes' if status['enabled'] else 'No'}")
+            print(f"  Email:      {status.get('email') or '-'}")
+            print(f"  Provider:   {status.get('provider') or '-'}")
+            daemon = status.get('daemon', {})
+            if daemon.get('running'):
+                print(f"  Daemon:     Running (PID: {daemon.get('pid')})")
+            else:
+                print("  Daemon:     Stopped")
+            return 0
+        except ImportError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    if args.subcommand == "test":
+        try:
+            from maild_client import test_mail_connection
+            result = test_mail_connection()
+            print("Mail Connection Test")
+            print("=" * 40)
+            imap = result.get('imap', {})
+            smtp = result.get('smtp', {})
+            print(f"  IMAP: {'✓' if imap.get('success') else '✗'} {imap.get('message', '')}")
+            print(f"  SMTP: {'✓' if smtp.get('success') else '✗'} {smtp.get('message', '')}")
+            return 0 if result.get('success') else 1
+        except ImportError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    if args.subcommand == "config":
+        try:
+            from mail.config import load_config
+            config = load_config()
+            print("Mail Configuration")
+            print("=" * 40)
+            print(f"  Enabled:          {config.enabled}")
+            print(f"  Provider:         {config.account.provider}")
+            print(f"  Email:            {config.account.email or '-'}")
+            print(f"  IMAP Host:        {config.account.imap.host}:{config.account.imap.port}")
+            print(f"  SMTP Host:        {config.account.smtp.host}:{config.account.smtp.port}")
+            print(f"  Routing Mode:     {config.routing.mode}")
+            print(f"  Default Provider: {config.routing.default_provider}")
+            print(f"  Poll Interval:    {config.polling.interval_seconds}s")
+            # New fields
+            allowed = config.routing.allowed_senders
+            print(f"  Allowed Senders:  {', '.join(allowed) if allowed else '(all)'}")
+            print(f"  Reply To:         {config.routing.reply_to_address or '(original sender)'}")
+            return 0
+        except ImportError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+    parser.print_help()
+    return 1
+
+
 def cmd_droid_subcommand(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="ccb droid", description="Droid-specific commands")
     subparsers = parser.add_subparsers(dest="subcommand", help="Droid subcommands")
@@ -4573,10 +4673,14 @@ def main():
         parser.print_help()
         return 1
 
+    # Handle 'ccb mail' subcommand
+    if argv and argv[0] == "mail":
+        return cmd_mail(argv[1:])
+
     start_parser = argparse.ArgumentParser(
         description="Claude AI unified launcher",
         add_help=True,
-        epilog="Other commands: ccb update | ccb version | ccb kill | ccb uninstall | ccb reinstall | ccb droid setup-delegation",
+        epilog="Other commands: ccb update | ccb version | ccb kill | ccb uninstall | ccb reinstall | ccb droid setup-delegation | ccb mail setup",
     )
     start_parser.add_argument(
         "providers",

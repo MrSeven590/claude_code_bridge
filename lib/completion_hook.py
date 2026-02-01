@@ -86,13 +86,20 @@ def _run_hook_async(
                 env["CCB_WORK_DIR"] = work_dir
 
             # Pass reply via stdin to avoid command line length limits
-            subprocess.run(cmd, input=(reply or "").encode("utf-8"), capture_output=True, timeout=10, env=env)
-        except Exception:
-            pass
+            # Use longer timeout for SMTP retries (3 retries * 8s max backoff + send time)
+            result = subprocess.run(cmd, input=(reply or "").encode("utf-8"), capture_output=True, timeout=60, env=env)
+            if result.returncode != 0:
+                stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+                if stderr:
+                    print(f"[completion-hook] Error: {stderr}", file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            print("[completion-hook] Timeout waiting for email send", file=sys.stderr)
+        except Exception as e:
+            print(f"[completion-hook] Error: {e}", file=sys.stderr)
 
     thread = threading.Thread(target=_run, daemon=False)
     thread.start()
-    thread.join(timeout=15)  # Wait for hook to complete
+    thread.join(timeout=65)  # Wait for hook to complete (match subprocess timeout + buffer)
 
 
 def notify_completion(
