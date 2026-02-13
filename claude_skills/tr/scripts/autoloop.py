@@ -301,7 +301,11 @@ def _acquire_lock(lock_path: Path) -> Any:
     else:
         # Windows: best-effort exclusive open (no flock available)
         import msvcrt
-        msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
+        try:
+            msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
+        except (OSError, PermissionError):
+            fp.close()
+            raise BlockingIOError("lock is held by another process")
     fp.write(str(os.getpid()))
     fp.flush()
     return fp
